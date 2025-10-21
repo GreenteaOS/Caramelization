@@ -255,6 +255,98 @@ LRESULT CALLBACK TestWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 }
 
 /**
+ * @brief Tests the RegisterClassExW function from user32.dll.
+ * This test covers successful registration and error handling for invalid parameters.
+ */
+void test_user32_RegisterClassEx() {
+    g_currentTestName = "test_user32_RegisterClassEx";
+
+    WNDCLASSEXW wcex = {0};
+    wcex.cbSize = sizeof(WNDCLASSEXW);
+    wcex.style = CS_HREDRAW | CS_VREDRAW;
+    wcex.lpfnWndProc = TestWndProc;
+    wcex.cbClsExtra = 0;
+    wcex.cbWndExtra = 0;
+    wcex.hInstance = GetModuleHandle(NULL);
+    wcex.hIcon = NULL;
+    wcex.hCursor = NULL;
+    wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wcex.lpszMenuName = NULL;
+    wcex.lpszClassName = L"MyTestClass";
+    wcex.hIconSm = NULL;
+
+    // --- Test 1: Successful registration ---
+    test_print_info("> Running sub-test: Valid Registration");
+    ATOM atom = RegisterClassExW(&wcex);
+    test_print_uint32("Result ATOM", atom);
+    if (atom != 0) {
+        test_print_bool("Unregister Success", UnregisterClassW(wcex.lpszClassName, wcex.hInstance));
+    }
+
+    // --- Test 2: NULL parameter ---
+    test_print_info("> Running sub-test: NULL Parameter");
+    // Note: restore_initial_state() already cleared LastError for us.
+    __try {
+        RegisterClassExW(NULL);
+    }
+    __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        test_print_info("RegisterClassExW(NULL); crashed as expected");
+        // TODO extract crash reason? like NPE
+    }
+    test_print_uint32("Result ATOM on NULL", atom);
+    test_print_uint32("GetLastError()", GetLastError());
+}
+
+/**
+ * @brief Tests the CreateWindowExW function from user32.dll.
+ * This test covers successful window creation and error handling for invalid class names.
+ */
+void test_user32_CreateWindowEx() {
+    g_currentTestName = "test_user32_CreateWindowEx";
+
+    const WCHAR* szClassName = L"MyWindowCreationTestClass";
+    HINSTANCE hInstance = GetModuleHandle(NULL);
+
+    // --- Setup: Register a class to use for the test ---
+    WNDCLASSEXW wcex = {0};
+    wcex.cbSize = sizeof(WNDCLASSEXW);
+    wcex.lpfnWndProc = TestWndProc;
+    wcex.hInstance = hInstance;
+    wcex.lpszClassName = szClassName;
+    if (RegisterClassExW(&wcex) == 0) {
+        test_print_info("! SETUP FAILED: Could not register class for CreateWindowEx test.");
+        return;
+    }
+
+    // --- Test 1: Successful window creation ---
+    test_print_info("> Running sub-test: Valid Creation");
+    HWND hwnd = CreateWindowExW(
+        0,                              // Optional window styles.
+        szClassName,                    // Window class
+        L"Test Window",                 // Window text
+        WS_OVERLAPPEDWINDOW,            // Window style
+        CW_USEDEFAULT, CW_USEDEFAULT,   // Position
+        CW_USEDEFAULT, CW_USEDEFAULT,   // Size
+        NULL,                           // Parent window
+        NULL,                           // Menu
+        hInstance,                      // Instance handle
+        NULL                            // Additional application data
+    );
+    test_print_handle("Result HWND", hwnd);
+    if (hwnd != NULL) {
+        DestroyWindow(hwnd);
+    }
+
+    // --- Test 2: Creation with a non-existent class name ---
+    test_print_info("> Running sub-test: Non-Existent Class");
+    // Note: restore_initial_state() already cleared LastError for us.
+    HWND hwndInvalid = CreateWindowExW(0, L"ThisClassDoesNotExist123", L"Invalid", 0, 0, 0, 0, 0, NULL, NULL, hInstance, NULL);
+    test_print_handle("Result HWND", hwndInvalid);
+    test_print_uint32("GetLastError()", GetLastError());
+
+    // --- Teardown: Unregister the class ---
+    UnregisterClassW(szClassName, hInstance);
+}
 
 // =================================================================================================
 // Test Runner Infrastructure
@@ -264,6 +356,13 @@ LRESULT CALLBACK TestWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 struct TestEntry {
     const char* testName;
     void (*testFunction)();
+};
+
+// The master array of all tests in the framework.
+// Add new tests here.
+TestEntry g_tests[] = {
+    { "test_user32_RegisterClassEx", test_user32_RegisterClassEx },
+    { "test_user32_CreateWindowEx",  test_user32_CreateWindowEx },
 };
 
 /**
@@ -279,11 +378,72 @@ void print_available_tests() {
     printf("Run specific tests with: .\\win32_test_framework.exe test_name_1 test_name_2 ...\n");
 }
 
+/**
+ * @brief Runs a single test identified by its TestEntry.
+ * @param test The test to run.
+ */
+void run_test(const TestEntry* test) {
+    // Pre-Test: Restore all previously saved state for test isolation.
+    restore_initial_state();
+
+    printf("============================================================\n");
+    printf(">> Running test: %s\n", test->testName);
+    printf("------------------------------------------------------------\n");
+    fflush(0);
+    __try {
+        test->testFunction();
+    }
+    __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        printf("------------------ TEST CRASHED HERE! ------------------\n");
+    }
+    printf("<< Finished test: %s\n", test->testName);
+    printf("============================================================\n\n");
 }
 
 // =================================================================================================
 // Main Entry Point
 // =================================================================================================
 int wmain(int argc, wchar_t* argv[]) {
+    // Save the pristine state of the application once at the very beginning.
+    save_initial_state();
+
+    if (argc < 2) {
+        print_available_tests();
+        return 0;
+    }
+
+    int testCount = sizeof(g_tests) / sizeof(TestEntry);
+
+    // Check for the "all" command
+    if (argc == 2 && wcscmp(argv[1], L"all") == 0) {
+        printf("Running all %d tests...\n\n", testCount);
+        for (int i = 0; i < testCount; ++i) {
+            run_test(&g_tests[i]);
+        }
+        printf("All tests completed.\n");
+        return 0;
+    }
+
+    // Run specific tests based on command line arguments
+    for (int i = 1; i < argc; ++i) {
+        bool foundTest = false;
+        // Convert argument to multibyte string for comparison
+        char testNameArg[128];
+        size_t convertedChars = 0;
+        wcstombs_s(&convertedChars, testNameArg, 128, argv[i], _TRUNCATE);
+
+        for (int j = 0; j < testCount; ++j) {
+            if (strcmp(g_tests[j].testName, testNameArg) == 0) {
+                run_test(&g_tests[j]);
+                foundTest = true;
+                break;
+            }
+        }
+
+        if (!foundTest) {
+            printf("!! Test not found: %s\n\n", testNameArg);
+        }
+    }
+
     return 0;
 }
