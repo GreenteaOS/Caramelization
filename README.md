@@ -4,7 +4,7 @@
 <img title="CURSED :E" align="center" src="/CURSED.webp" width="49%" />
 </p>
 
-Tests framework of the @GreenteaOS
+Tests framework of the [Greentea OS](https://github.com/GreenteaOS)
 
 # THIS REPO IS CURSED
 
