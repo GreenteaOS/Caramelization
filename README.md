@@ -1,2 +1,19 @@
 # Caramelization
+
+<p align="center">
+<img title="CURSED :E" align="center" src="/CURSED.webp" width="49%" />
+</p>
+
 Tests framework of the @GreenteaOS
+
+# THIS REPO IS CURSED
+
+> [!CAUTION]
+>
+> *This repo contains API tests!*
+
+- Uses C++ as "C with Classes"
+- Intentionally calls functions incorrectly
+- Crashes and resurrects itself all the time
+
+Implementation at https://github.com/GreenteaOS/Caramel
