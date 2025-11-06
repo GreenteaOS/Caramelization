@@ -413,20 +413,22 @@ void test_user32_CreateWindowEx() {
     ASSERT_SUBTEST(subtests, &numSubtests, "Valid Creation: Destroy succeeds", destroy != FALSE && err == ERROR_SUCCESS, "DestroyWindow failed");
 
     // Subtest: Invalid dwStyle (isolated parameter validation)
+    // Tests sequential checks: dwStyle validation occurs before class lookup; WS_CHILD requires non-NULL hWndParent.
     SetLastError(0);
     HWND hwndStyleInvalid = CreateWindowExW(
         0,                          // dwExStyle
-        szClassName,                // lpClassName (registered to isolate style)
+        szClassName,                // lpClassName (registered to isolate style check)
         L"Style Invalid",
-        0xFFFFFFFF,                 // dwStyle (invalid value)
-        0, 0,                       // x, y (concrete position)
-        100, 100,                   // nWidth, nHeight (concrete, non-zero)
-        NULL, NULL, hinst, NULL
+        WS_CHILD | WS_VISIBLE,      // dwStyle (invalid: child window without parent)
+        0, 0,                       // x, y (relative to parent, but irrelevant due to failure)
+        100, 100,                   // nWidth, nHeight (concrete)
+        NULL,                       // hWndParent (NULL triggers invalid config)
+        NULL, hinst, NULL
     );
     ASSERT_SUBTEST(subtests, &numSubtests, "Invalid dwStyle: Invalid HWND",
                    !is_valid_hwnd(hwndStyleInvalid), "Valid HWND for invalid style");
-    ASSERT_LAST_ERROR(subtests, &numSubtests, "Invalid dwStyle: ERROR_INVALID_PARAMETER",
-                     ERROR_INVALID_PARAMETER, "Unexpected error code");
+    ASSERT_LAST_ERROR(subtests, &numSubtests, "Invalid dwStyle: ERROR_TLW_WITH_WSCHILD",
+                     ERROR_TLW_WITH_WSCHILD, "Unexpected error code");
 
     // Subtest: Non-Existent Class (with valid style/dims)
     SetLastError(0);
@@ -439,7 +441,6 @@ void test_user32_CreateWindowEx() {
         100, 100,                       // nWidth, nHeight
         NULL, NULL, hinst, NULL
     );
-    err = GetLastError();
     ASSERT_SUBTEST(subtests, &numSubtests, "Non-Existent Class: Invalid HWND", !is_valid_hwnd(hwndInvalid), "Valid HWND for invalid class");
     ASSERT_LAST_ERROR(subtests, &numSubtests, "Non-Existent Class: ERROR_CANNOT_FIND_WND_CLASS",
                      ERROR_CANNOT_FIND_WND_CLASS, "Unexpected error code");
@@ -459,7 +460,6 @@ void test_user32_CreateWindowEx() {
         hInvalidInst,  // Invalid hInstance
         NULL
     );
-    err = GetLastError();
     ASSERT_SUBTEST(subtests, &numSubtests, "Invalid hInstance: Invalid HWND", !is_valid_hwnd(hwnd), "Valid HWND for invalid hInstance");
     ASSERT_LAST_ERROR(subtests, &numSubtests, "Invalid hInstance: ERROR_CANNOT_FIND_WND_CLASS",
                      ERROR_CANNOT_FIND_WND_CLASS, "Unexpected error code");  // Module mismatch as class not found
