@@ -22,6 +22,8 @@
 // --- Globals ---
 // Holds the name of the test currently being executed.
 const char* g_currentTestName = "NONE";
+bool g_currentTestFailed = false;
+int g_Failed = 0;
 
 // =================================================================================================
 // State Management
@@ -82,6 +84,8 @@ void restore_initial_state() {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL);
 
     return; // TODO crash
+
+    // TODO exhaust message queue with PeekMessage _REMOVE flag
 
     // 5. Reset Standard Stream File Descriptors (If a test redirected streams)
 
@@ -240,8 +244,16 @@ void test_print_handle(const char* label, HANDLE handle) {
 		swprintf_s(buffer, 256, L"  [%hs] %-25hs: HWND_MESSAGE (%p)", g_currentTestName, label, handle);
 	}
     else {
+        // TODO check for >0xFFFF <0xXXXX and lower bits etc + do not print exact value
         swprintf_s(buffer, 256, L"  [%hs] %-25hs: VALID_HANDLE (%p)", g_currentTestName, label, handle);
     }
+    test_print_output(buffer);
+}
+
+void failed(const char* reason) {
+    g_currentTestFailed = true;
+    WCHAR buffer[256];
+    swprintf_s(buffer, 256, L"  [%hs] TEST FAILED: %-25hs", g_currentTestName, reason);
     test_print_output(buffer);
 }
 
@@ -259,8 +271,6 @@ LRESULT CALLBACK TestWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
  * This test covers successful registration and error handling for invalid parameters.
  */
 void test_user32_RegisterClassEx() {
-    g_currentTestName = "test_user32_RegisterClassEx";
-
     WNDCLASSEXW wcex = {0};
     wcex.cbSize = sizeof(WNDCLASSEXW);
     wcex.style = CS_HREDRAW | CS_VREDRAW;
@@ -278,23 +288,29 @@ void test_user32_RegisterClassEx() {
     // --- Test 1: Successful registration ---
     test_print_info("> Running sub-test: Valid Registration");
     ATOM atom = RegisterClassExW(&wcex);
-    test_print_uint32("Result ATOM", atom);
+    test_print_uint32("Result ATOM", atom); // TODO test_print_atom("Class ATOM", atom); ? expected ? failed ?!
     if (atom != 0) {
         test_print_bool("Unregister Success", UnregisterClassW(wcex.lpszClassName, wcex.hInstance));
     }
 
     // --- Test 2: NULL parameter ---
     test_print_info("> Running sub-test: NULL Parameter");
+    bool crashed = false;
     // Note: restore_initial_state() already cleared LastError for us.
     __try {
         RegisterClassExW(NULL);
     }
     __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        crashed = true;
         test_print_info("RegisterClassExW(NULL); crashed as expected");
         // TODO extract crash reason? like NPE
     }
+
+    if (!crashed) failed("RegisterClassExW(NULL); should crash.");
+
     test_print_uint32("Result ATOM on NULL", atom);
     test_print_uint32("GetLastError()", GetLastError());
+    // TODO test_print_last_error_vs_expected();
 }
 
 /**
@@ -302,8 +318,6 @@ void test_user32_RegisterClassEx() {
  * This test covers successful window creation and error handling for invalid class names.
  */
 void test_user32_CreateWindowEx() {
-    g_currentTestName = "test_user32_CreateWindowEx";
-
     const WCHAR* szClassName = L"MyWindowCreationTestClass";
     HINSTANCE hInstance = GetModuleHandle(NULL);
 
@@ -314,7 +328,7 @@ void test_user32_CreateWindowEx() {
     wcex.hInstance = hInstance;
     wcex.lpszClassName = szClassName;
     if (RegisterClassExW(&wcex) == 0) {
-        test_print_info("! SETUP FAILED: Could not register class for CreateWindowEx test.");
+        failed("! SETUP FAILED: Could not register class for CreateWindowEx test.");
         return;
     }
 
@@ -384,19 +398,30 @@ void print_available_tests() {
  */
 void run_test(const TestEntry* test) {
     // Pre-Test: Restore all previously saved state for test isolation.
+    fflush(0);
     restore_initial_state();
+    g_currentTestName = test->testName;
+    g_currentTestFailed = false;
 
     printf("============================================================\n");
-    printf(">> Running test: %s\n", test->testName);
+    fflush(0);
+    printf(">> Running test: %s\n", g_currentTestName);
     printf("------------------------------------------------------------\n");
     fflush(0);
     __try {
         test->testFunction();
     }
     __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
-        printf("------------------ TEST CRASHED HERE! ------------------\n");
+        failed("------------------ TEST CRASHED HERE! ------------------\n");
     }
+    printf("------------------------------------------------------------\n");
     printf("<< Finished test: %s\n", test->testName);
+
+    if (g_currentTestFailed == true) {
+        printf("!! THIS TEST FAILED: %s\n", test->testName);
+        g_Failed++;
+    }
+
     printf("============================================================\n\n");
 }
 
@@ -420,7 +445,9 @@ int wmain(int argc, wchar_t* argv[]) {
         for (int i = 0; i < testCount; ++i) {
             run_test(&g_tests[i]);
         }
-        printf("All tests completed.\n");
+        printf("Success: %d of %d\n", testCount - g_Failed, testCount);
+        printf("Fail: %d of %d\n", g_Failed, testCount);
+        printf("All %d tests completed.\n", testCount);
         return 0;
     }
 
