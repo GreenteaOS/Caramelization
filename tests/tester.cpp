@@ -384,18 +384,57 @@ void test_user32_CreateWindowEx() {
     err = GetLastError();
     ASSERT_SUBTEST(subtests, &numSubtests, "Valid Creation: Destroy succeeds", destroy != FALSE && err == ERROR_SUCCESS, "DestroyWindow failed");
 
-    // Subtest: Non-Existent Class
+    // Subtest: Invalid dwStyle (isolated parameter validation)
     SetLastError(0);
-    HWND hwndInvalid = CreateWindowExW(0, L"ThisClassDoesNotExist123", L"Invalid", 0, 0, 0, 0, 0, NULL, NULL, hinst, NULL);
+    HWND hwndStyleInvalid = CreateWindowExW(
+        0,                          // dwExStyle
+        szClassName,                // lpClassName (registered to isolate style)
+        L"Style Invalid",
+        0xFFFFFFFF,                 // dwStyle (invalid value)
+        0, 0,                       // x, y (concrete position)
+        100, 100,                   // nWidth, nHeight (concrete, non-zero)
+        NULL, NULL, hinst, NULL
+    );
+    ASSERT_SUBTEST(subtests, &numSubtests, "Invalid dwStyle: Invalid HWND",
+                   !is_valid_hwnd(hwndStyleInvalid), "Valid HWND for invalid style");
+    ASSERT_LAST_ERROR(subtests, &numSubtests, "Invalid dwStyle: ERROR_INVALID_PARAMETER",
+                     ERROR_INVALID_PARAMETER, "Unexpected error code");
+
+    // Subtest: Non-Existent Class (with valid style/dims)
+    SetLastError(0);
+    HWND hwndInvalid = CreateWindowExW(
+        0,                              // dwExStyle
+        L"ThisClassDoesNotExist123",    // lpClassName (unregistered)
+        L"Invalid",
+        WS_OVERLAPPEDWINDOW,            // dwStyle (valid)
+        0, 0,                           // x, y (concrete)
+        100, 100,                       // nWidth, nHeight
+        NULL, NULL, hinst, NULL
+    );
     err = GetLastError();
     ASSERT_SUBTEST(subtests, &numSubtests, "Non-Existent Class: Invalid HWND", !is_valid_hwnd(hwndInvalid), "Valid HWND for invalid class");
-    ASSERT_SUBTEST(subtests, &numSubtests, "Non-Existent Class: ERROR_CLASS_DOES_NOT_EXIST", err == ERROR_CLASS_DOES_NOT_EXIST, "Unexpected error code");
+    ASSERT_LAST_ERROR(subtests, &numSubtests, "Non-Existent Class: ERROR_CANNOT_FIND_WND_CLASS",
+                     ERROR_CANNOT_FIND_WND_CLASS, "Unexpected error code");
 
-    // Subtest: NULL hInstance
+    // Subtest: Invalid hInstance (module mismatch)
+    ATOM classAtom = setupAtom;  // From setup
     SetLastError(0);
-    hwnd = CreateWindowExW(0, szClassName, L"Test", 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
+    HINSTANCE hInvalidInst = (HINSTANCE)0xDEADBEEF;  // Arbitrary invalid module
+    hwnd = CreateWindowExW(
+        0,
+        (LPCWSTR)MAKEINTATOM(classAtom),  // lpClassName as atom (bypasses string/module string lookup)
+        L"Test",
+        WS_OVERLAPPEDWINDOW,
+        0, 0,
+        100, 100,
+        NULL, NULL,
+        hInvalidInst,  // Invalid hInstance
+        NULL
+    );
     err = GetLastError();
-    ASSERT_SUBTEST(subtests, &numSubtests, "NULL hInstance: Fails with ERROR_INVALID_PARAMETER", !is_valid_hwnd(hwnd) && err == ERROR_INVALID_PARAMETER, "Did not fail with expected error");
+    ASSERT_SUBTEST(subtests, &numSubtests, "Invalid hInstance: Invalid HWND", !is_valid_hwnd(hwnd), "Valid HWND for invalid hInstance");
+    ASSERT_LAST_ERROR(subtests, &numSubtests, "Invalid hInstance: ERROR_CANNOT_FIND_WND_CLASS",
+                     ERROR_CANNOT_FIND_WND_CLASS, "Unexpected error code");  // Module mismatch as class not found
 
     // Teardown: Unregister
     UnregisterClassW(szClassName, hinst);
