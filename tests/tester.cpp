@@ -4,9 +4,10 @@
 //
 // - Style: C with Classes
 // - Target: 32-bit (x86) and 64-bit (x86_64) Windows
+// - Environment: Supposed to be runnable under Windows as-is, must not have third-party quirks
 // - Compilers: Clang
 // - Purpose: Provides a simple framework to test Win32 API functions with JSON output for
-//   automated conformance testing (e.g., matching Windows behavior in WineHQ/ReactOS).
+//   automated conformance testing (e.g., matching Windows behavior in WineHQ/ReactOS/GreenteaOS).
 //
 // =================================================================================================
 
@@ -38,6 +39,13 @@ struct SubTest {
     bool passed;
     char reason[512];
 };
+
+/**
+ * @brief Global array and counter for subtests (reset per test).
+ */
+static struct SubTest g_subtests[4096];  // Fixed size; expandable if needed
+static int g_numSubtests = 0;
+static bool g_testPassed = true;
 
 // =================================================================================================
 // JSON Output Utilities
@@ -120,7 +128,8 @@ void output_test_json(const char* testName, bool overallPassed, const struct Sub
  * @param line Source line (for failure location).
  */
 void add_subtest(struct SubTest* subtests, int* numSubtests, const char* name, bool passed, const char* reason, const char* file, int line) {
-    if (*numSubtests >= 10) return;  // Fixed limit; expand as needed
+    constexpr size_t ARRAY_SIZE = sizeof(g_subtests) / sizeof(g_subtests[0]);  // Compile-time computation
+    if (*numSubtests >= (int)ARRAY_SIZE) return;  // Align with global array size
     strncpy_s(subtests[*numSubtests].name, sizeof(subtests[*numSubtests].name), name, _TRUNCATE);
     subtests[*numSubtests].passed = passed;
     if (passed) {
@@ -132,6 +141,9 @@ void add_subtest(struct SubTest* subtests, int* numSubtests, const char* name, b
         } else {
             snprintf(temp, sizeof(temp), "Failed at %s:%d", file ? file : "unknown", line);
         }
+        if (strlen(temp) >= sizeof(subtests[*numSubtests].reason) - 12) {  // Reserve space for suffix
+            strcat_s(temp, sizeof(temp), " (truncated)");
+        }
         strncpy_s(subtests[*numSubtests].reason, sizeof(subtests[*numSubtests].reason), temp, _TRUNCATE);
     }
     (*numSubtests)++;
@@ -140,10 +152,11 @@ void add_subtest(struct SubTest* subtests, int* numSubtests, const char* name, b
 /**
  * @brief Asserts a boolean condition for a subtest.
  */
-#define ASSERT_SUBTEST(subtests, numSubtests, name, condition, failMsg) \
+#define ASSERT_SUBTEST(name, condition, failMsg) \
     do { \
         bool __cond = !!(condition); \
-        add_subtest(subtests, numSubtests, name, __cond, __cond ? "" : failMsg, __FILE__, __LINE__); \
+        add_subtest(g_subtests, &g_numSubtests, name, __cond, __cond ? "" : failMsg, __FILE__, __LINE__); \
+        if (!__cond) g_testPassed = false; \
     } while(0)
 
 /**
@@ -181,7 +194,7 @@ const char* GetErrorCodeName(DWORD code) {
  * @param expected The expected error code (DWORD).
  * @param failMsg Base failure message (appended with actual value if failed).
  */
-#define ASSERT_LAST_ERROR(subtests, numSubtests, name, expected, failMsg) \
+#define ASSERT_LAST_ERROR(name, expected, failMsg) \
     do { \
         DWORD __actual = GetLastError(); \
         bool __cond = (__actual == (expected)); \
@@ -191,19 +204,21 @@ const char* GetErrorCodeName(DWORD code) {
         } else { \
             snprintf(__reason, sizeof(__reason), "%s (actual: %lu / %s, expected: %lu / %s)", failMsg, (unsigned long)__actual, GetErrorCodeName(__actual), (unsigned long)expected, GetErrorCodeName(expected)); \
         } \
-        add_subtest(subtests, numSubtests, name, __cond, __reason, __FILE__, __LINE__); \
+        add_subtest(g_subtests, &g_numSubtests, name, __cond, __reason, __FILE__, __LINE__); \
+        if (!__cond) g_testPassed = false; \
     } while(0)
 
 /**
  * @brief Expects a crash (access violation) in the try block.
  */
-#define EXPECT_CRASH(subtests, numSubtests, name, codeBlock) \
+#define EXPECT_CRASH(name, codeBlock) \
     do { \
         __try { \
             codeBlock; \
-            add_subtest(subtests, numSubtests, name, false, "Expected crash but did not occur", __FILE__, __LINE__); \
+            add_subtest(g_subtests, &g_numSubtests, name, false, "Expected crash but did not occur", __FILE__, __LINE__); \
+            g_testPassed = false; \
         } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) { \
-            add_subtest(subtests, numSubtests, name, true, "", __FILE__, __LINE__); \
+            add_subtest(g_subtests, &g_numSubtests, name, true, "", __FILE__, __LINE__); \
         } \
     } while(0)
 
@@ -323,8 +338,6 @@ LRESULT CALLBACK TestWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 }
 
 void test_user32_RegisterClassEx() {
-    struct SubTest subtests[10];
-    int numSubtests = 0;
     DWORD err = 0;
 
     HINSTANCE hinst = GetModuleHandle(NULL);
@@ -346,41 +359,25 @@ void test_user32_RegisterClassEx() {
     SetLastError(0);
     ATOM atom = RegisterClassExW(&wcex);
     err = GetLastError();
-    ASSERT_SUBTEST(subtests, &numSubtests, "Valid Registration: Valid Class ATOM", is_valid_class_atom(atom, hinst), "Invalid class ATOM returned");
-    ASSERT_SUBTEST(subtests, &numSubtests, "Valid Registration: ERROR_SUCCESS", err == ERROR_SUCCESS, "Unexpected error code after success");
+    ASSERT_SUBTEST("Valid Registration: Valid Class ATOM", is_valid_class_atom(atom, hinst), "Invalid class ATOM returned");
+    ASSERT_SUBTEST("Valid Registration: ERROR_SUCCESS", err == ERROR_SUCCESS, "Unexpected error code after success");
     SetLastError(0);
     BOOL unreg = (atom != 0) ? UnregisterClassW(MAKEINTATOM(atom), hinst) : FALSE;
     err = GetLastError();
-    ASSERT_SUBTEST(subtests, &numSubtests, "Valid Registration: Unregister succeeds", unreg != FALSE && err == ERROR_SUCCESS, "Unregister failed");
+    ASSERT_SUBTEST("Valid Registration: Unregister succeeds", unreg != FALSE && err == ERROR_SUCCESS, "Unregister failed");
 
     // Subtest 2: NULL parameter (expect crash due to invalid pointer deref)
-    EXPECT_CRASH(subtests, &numSubtests, "NULL Parameter: Access Violation", RegisterClassExW(NULL); );
+    EXPECT_CRASH("NULL Parameter: Access Violation", RegisterClassExW(NULL); );
 
     // Subtest 3: Invalid cbSize (expect ERROR_INVALID_PARAMETER)
     wcex.cbSize = sizeof(WNDCLASSEXW) - 1;  // Too small
     SetLastError(0);
     atom = RegisterClassExW(&wcex);
     err = GetLastError();
-    ASSERT_SUBTEST(subtests, &numSubtests, "Invalid cbSize: Fails with ERROR_INVALID_PARAMETER", atom == 0 && err == ERROR_INVALID_PARAMETER, "Did not fail with expected error");
-
-    bool overallPassed = true;
-    for (int i = 0; i < numSubtests; i++) {
-        if (!subtests[i].passed) {
-            overallPassed = false;
-            break;
-        }
-    }
-    if (!overallPassed) {
-        g_Failed++;
-        strncpy_s(g_failed_test_names[g_num_failed_tests], 128, g_currentTestName, _TRUNCATE);
-        g_num_failed_tests++;
-    }
-    output_test_json(g_currentTestName, overallPassed, subtests, numSubtests);
+    ASSERT_SUBTEST("Invalid cbSize: Fails with ERROR_INVALID_PARAMETER", atom == 0 && err == ERROR_INVALID_PARAMETER, "Did not fail with expected error");
 }
 
 void test_user32_CreateWindowEx() {
-    struct SubTest subtests[10];
-    int numSubtests = 0;
     DWORD err = 0;
 
     const WCHAR* szClassName = L"MyWindowCreationTestClass";
@@ -395,7 +392,7 @@ void test_user32_CreateWindowEx() {
     SetLastError(0);
     ATOM setupAtom = RegisterClassExW(&wcex);
     err = GetLastError();
-    ASSERT_SUBTEST(subtests, &numSubtests, "Setup: Class Registration", setupAtom != 0 && err == ERROR_SUCCESS, "Setup registration failed");
+    ASSERT_SUBTEST("Setup: Class Registration", setupAtom != 0 && err == ERROR_SUCCESS, "Setup registration failed");
 
     // Subtest: Successful creation
     SetLastError(0);
@@ -405,12 +402,12 @@ void test_user32_CreateWindowEx() {
         NULL, NULL, hinst, NULL
     );
     err = GetLastError();
-    ASSERT_SUBTEST(subtests, &numSubtests, "Valid Creation: Valid HWND", is_valid_hwnd(hwnd), "Invalid HWND returned");
-    ASSERT_SUBTEST(subtests, &numSubtests, "Valid Creation: ERROR_SUCCESS", err == ERROR_SUCCESS || err == 0, "Unexpected error code after success");
+    ASSERT_SUBTEST("Valid Creation: Valid HWND", is_valid_hwnd(hwnd), "Invalid HWND returned");
+    ASSERT_SUBTEST("Valid Creation: ERROR_SUCCESS", err == ERROR_SUCCESS || err == 0, "Unexpected error code after success");
     SetLastError(0);
     BOOL destroy = (hwnd != NULL) ? DestroyWindow(hwnd) : FALSE;
     err = GetLastError();
-    ASSERT_SUBTEST(subtests, &numSubtests, "Valid Creation: Destroy succeeds", destroy != FALSE && err == ERROR_SUCCESS, "DestroyWindow failed");
+    ASSERT_SUBTEST("Valid Creation: Destroy succeeds", destroy != FALSE && err == ERROR_SUCCESS, "DestroyWindow failed");
 
     // Subtest: Invalid dwStyle (isolated parameter validation)
     // Tests sequential checks: dwStyle validation occurs before class lookup; WS_CHILD requires non-NULL hWndParent.
@@ -425,9 +422,9 @@ void test_user32_CreateWindowEx() {
         NULL,                       // hWndParent (NULL triggers invalid config)
         NULL, hinst, NULL
     );
-    ASSERT_SUBTEST(subtests, &numSubtests, "Invalid dwStyle: Invalid HWND",
+    ASSERT_SUBTEST("Invalid dwStyle: Invalid HWND",
                    !is_valid_hwnd(hwndStyleInvalid), "Valid HWND for invalid style");
-    ASSERT_LAST_ERROR(subtests, &numSubtests, "Invalid dwStyle: ERROR_TLW_WITH_WSCHILD",
+    ASSERT_LAST_ERROR("Invalid dwStyle: ERROR_TLW_WITH_WSCHILD",
                      ERROR_TLW_WITH_WSCHILD, "Unexpected error code");
 
     // Subtest: Non-Existent Class (with valid style/dims)
@@ -441,8 +438,8 @@ void test_user32_CreateWindowEx() {
         100, 100,                       // nWidth, nHeight
         NULL, NULL, hinst, NULL
     );
-    ASSERT_SUBTEST(subtests, &numSubtests, "Non-Existent Class: Invalid HWND", !is_valid_hwnd(hwndInvalid), "Valid HWND for invalid class");
-    ASSERT_LAST_ERROR(subtests, &numSubtests, "Non-Existent Class: ERROR_CANNOT_FIND_WND_CLASS",
+    ASSERT_SUBTEST("Non-Existent Class: Invalid HWND", !is_valid_hwnd(hwndInvalid), "Valid HWND for invalid class");
+    ASSERT_LAST_ERROR("Non-Existent Class: ERROR_CANNOT_FIND_WND_CLASS",
                      ERROR_CANNOT_FIND_WND_CLASS, "Unexpected error code");
 
     // Subtest: Invalid hInstance (module mismatch)
@@ -460,26 +457,12 @@ void test_user32_CreateWindowEx() {
         hInvalidInst,  // Invalid hInstance
         NULL
     );
-    ASSERT_SUBTEST(subtests, &numSubtests, "Invalid hInstance: Invalid HWND", !is_valid_hwnd(hwnd), "Valid HWND for invalid hInstance");
-    ASSERT_LAST_ERROR(subtests, &numSubtests, "Invalid hInstance: ERROR_CANNOT_FIND_WND_CLASS",
+    ASSERT_SUBTEST("Invalid hInstance: Invalid HWND", !is_valid_hwnd(hwnd), "Valid HWND for invalid hInstance");
+    ASSERT_LAST_ERROR("Invalid hInstance: ERROR_CANNOT_FIND_WND_CLASS",
                      ERROR_CANNOT_FIND_WND_CLASS, "Unexpected error code");  // Module mismatch as class not found
 
     // Teardown: Unregister
     UnregisterClassW(szClassName, hinst);
-
-    bool overallPassed = true;
-    for (int i = 0; i < numSubtests; i++) {
-        if (!subtests[i].passed) {
-            overallPassed = false;
-            break;
-        }
-    }
-    if (!overallPassed) {
-        g_Failed++;
-        strncpy_s(g_failed_test_names[g_num_failed_tests], 128, g_currentTestName, _TRUNCATE);
-        g_num_failed_tests++;
-    }
-    output_test_json(g_currentTestName, overallPassed, subtests, numSubtests);
 }
 
 // =================================================================================================
@@ -512,22 +495,26 @@ void run_test(const TestEntry* test) {
     restore_initial_state();
     g_currentTestName = test->testName;
 
+    // Reset globals for this test
+    memset(g_subtests, 0, sizeof(g_subtests));
+    g_numSubtests = 0;
+    g_testPassed = true;
+
     __try {
         test->testFunction();
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        // If test crashes outside subtests, output a failure JSON
-        struct SubTest subtests[1];
-        int numSubtests = 0;
-        add_subtest(subtests, &numSubtests, "Overall Execution", false, "Test crashed unexpectedly", __FILE__, __LINE__);
-        output_test_json(g_currentTestName, false, subtests, numSubtests);
+        add_subtest(g_subtests, &g_numSubtests, "Overall Execution", false, "Test crashed unexpectedly", __FILE__, __LINE__);
+        g_testPassed = false;
+    }
+
+    // Output JSON
+    output_test_json(g_currentTestName, g_testPassed, g_subtests, g_numSubtests);
+
+    if (!g_testPassed) {
         g_Failed++;
         strncpy_s(g_failed_test_names[g_num_failed_tests], 128, g_currentTestName, _TRUNCATE);
         g_num_failed_tests++;
-        return;
     }
-
-    // Note: Individual tests output their own JSON via the function.
-    // Summary handled in main.
 }
 
 // =================================================================================================
@@ -599,6 +586,8 @@ int wmain(int argc, wchar_t* argv[]) {
     printf("    ]\n");
     printf("  }\n");
     printf("}\n");
+
+    fflush(0);
 
     return g_Failed > 0 ? 1 : 0;  // Exit code for CI
 }
