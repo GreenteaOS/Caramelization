@@ -90,19 +90,19 @@ void output_test_json(const char* testName, bool overallPassed, const struct Sub
 
     char escapedReason[512];
     printf("{\n");
-    printf("  \"test\": \"%s\",\n", escapedName);
-    printf("  \"result\": \"%s\",\n", overallPassed ? "passed" : "failed");
-    printf("  \"subtests\": [\n");
+    printf("    \"test\": \"%s\",\n", escapedName);
+    printf("    \"result\": \"%s\",\n", overallPassed ? "passed" : "failed");
+    printf("    \"subtests\": [\n");
     for (int i = 0; i < numSubtests; i++) {
         json_escape_string(escapedReason, subtests[i].reason, sizeof(escapedReason));
-        printf("    {\n");
-        printf("      \"name\": \"%s\",\n", subtests[i].name);
-        printf("      \"result\": \"%s\",\n", subtests[i].passed ? "passed" : "failed");
-        printf("      \"reason\": \"%s\"\n", escapedReason);
-        printf("    }%s\n", (i < numSubtests - 1) ? "," : "");
+        printf("      {\n");
+        printf("        \"name\": \"%s\",\n", subtests[i].name);
+        printf("        \"result\": \"%s\",\n", subtests[i].passed ? "passed" : "failed");
+        printf("        \"reason\": \"%s\"\n", escapedReason);
+        printf("      }%s\n", (i < numSubtests - 1) ? "," : "");
     }
-    printf("  ]\n");
-    printf("}\n\n");
+    printf("    ]\n");
+    printf("  }");
 }
 
 // =================================================================================================
@@ -144,6 +144,27 @@ void add_subtest(struct SubTest* subtests, int* numSubtests, const char* name, b
     do { \
         bool __cond = !!(condition); \
         add_subtest(subtests, numSubtests, name, __cond, __cond ? "" : failMsg, __FILE__, __LINE__); \
+    } while(0)
+
+/**
+ * @brief Specialized assertion for GetLastError() comparisons.
+ * @param subtests Array to append to.
+ * @param numSubtests Pointer to count.
+ * @param name Subtest name.
+ * @param expected The expected error code (DWORD).
+ * @param failMsg Base failure message (appended with actual value if failed).
+ */
+#define ASSERT_LAST_ERROR(subtests, numSubtests, name, expected, failMsg) \
+    do { \
+        DWORD __actual = GetLastError(); \
+        bool __cond = (__actual == (expected)); \
+        char __reason[512]; \
+        if (__cond) { \
+            __reason[0] = '\0'; \
+        } else { \
+            snprintf(__reason, sizeof(__reason), "%s (actual: %lu / 0x%08lX)", failMsg, (unsigned long)__actual, (unsigned long)__actual); \
+        } \
+        add_subtest(subtests, numSubtests, name, __cond, __reason, __FILE__, __LINE__); \
     } while(0)
 
 /**
@@ -223,6 +244,8 @@ void restore_initial_state() {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
+
+    return; // TODO
 
     // Restore CRT streams
     if (saved_state.initialStdOutFD != -1) {
@@ -330,7 +353,7 @@ void test_user32_CreateWindowEx() {
     err = GetLastError();
     ASSERT_SUBTEST(subtests, &numSubtests, "Setup: Class Registration", setupAtom != 0 && err == ERROR_SUCCESS, "Setup registration failed");
 
-    // Subtest 1: Successful creation
+    // Subtest: Successful creation
     SetLastError(0);
     HWND hwnd = CreateWindowExW(
         0, szClassName, L"Test Window", WS_OVERLAPPEDWINDOW,
@@ -345,14 +368,14 @@ void test_user32_CreateWindowEx() {
     err = GetLastError();
     ASSERT_SUBTEST(subtests, &numSubtests, "Valid Creation: Destroy succeeds", destroy != FALSE && err == ERROR_SUCCESS, "DestroyWindow failed");
 
-    // Subtest 2: Non-existent class (expect NULL HWND, ERROR_CLASS_DOES_NOT_EXIST)
+    // Subtest: Non-Existent Class
     SetLastError(0);
     HWND hwndInvalid = CreateWindowExW(0, L"ThisClassDoesNotExist123", L"Invalid", 0, 0, 0, 0, 0, NULL, NULL, hinst, NULL);
     err = GetLastError();
     ASSERT_SUBTEST(subtests, &numSubtests, "Non-Existent Class: Invalid HWND", !is_valid_hwnd(hwndInvalid), "Valid HWND for invalid class");
     ASSERT_SUBTEST(subtests, &numSubtests, "Non-Existent Class: ERROR_CLASS_DOES_NOT_EXIST", err == ERROR_CLASS_DOES_NOT_EXIST, "Unexpected error code");
 
-    // Subtest 3: NULL hInstance (edge: should fail with ERROR_INVALID_PARAMETER)
+    // Subtest: NULL hInstance
     SetLastError(0);
     hwnd = CreateWindowExW(0, szClassName, L"Test", 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
     err = GetLastError();
@@ -398,7 +421,7 @@ void print_available_tests() {
     }
     printf("\nRun all tests with: .\\win32_test_framework.exe all\n");
     printf("Run specific tests with: .\\win32_test_framework.exe test_name_1 test_name_2 ...\n");
-    printf("Output is JSON; redirect with > test.log for parsing.\n");
+    printf("Output is JSON; redirect with > test.json for parsing.\n");
 }
 
 void run_test(const TestEntry* test) {
@@ -436,6 +459,10 @@ int wmain(int argc, wchar_t* argv[]) {
         return 0;
     }
 
+    // Begin of JSON
+    printf("{\n");
+    printf("  \"tests\": [");
+
     int testCount = sizeof(g_tests) / sizeof(TestEntry);
     g_Failed = 0;
     g_num_failed_tests = 0;
@@ -446,6 +473,7 @@ int wmain(int argc, wchar_t* argv[]) {
         total = testCount;
         for (int i = 0; i < testCount; ++i) {
             run_test(&g_tests[i]);
+            if (i < testCount - 1) printf(", ");
         }
     } else {
         total = argc - 1;
@@ -476,7 +504,7 @@ int wmain(int argc, wchar_t* argv[]) {
     }
 
     // Final summary JSON
-    printf("{\n");
+    printf("],\n");
     printf("  \"summary\": {\n");
     printf("    \"total\": %d,\n", total);
     printf("    \"passed\": %d,\n", total - g_Failed);
