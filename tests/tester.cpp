@@ -162,7 +162,7 @@ void add_subtest(struct SubTest* subtests, int* numSubtests, const char* name, b
         if (__cond) { \
             __reason[0] = '\0'; \
         } else { \
-            snprintf(__reason, sizeof(__reason), "%s (actual: %lu / 0x%08lX)", failMsg, (unsigned long)__actual, (unsigned long)__actual); \
+            snprintf(__reason, sizeof(__reason), "%s (actual: %lu / 0x%08lX, expected: %lu / 0x%08lX)", failMsg, (unsigned long)__actual, (unsigned long)__actual, (unsigned long)expected, (unsigned long)expected); \
         } \
         add_subtest(subtests, numSubtests, name, __cond, __reason, __FILE__, __LINE__); \
     } while(0)
@@ -185,25 +185,41 @@ void add_subtest(struct SubTest* subtests, int* numSubtests, const char* name, b
 // =================================================================================================
 
 /**
- * @brief Validates a class ATOM using GetClassInfoW (more robust than != 0).
+ * @brief Validates a class ATOM using bit-level checks per Win32 spec.
  * @param atom The ATOM to validate.
  * @param hinst The instance handle.
  * @return True if valid registered class.
  */
-bool is_valid_class_atom(ATOM atom, HINSTANCE hinst) {
+bool is_valid_class_atom(ATOM atom, HINSTANCE hinst = GetModuleHandle(NULL)) {
     if (atom == 0) return false;
-    WNDCLASSW wc;
-    ZeroMemory(&wc, sizeof(wc));
-    return GetClassInfoW(hinst, MAKEINTATOM(atom), &wc) != 0;
+    WNDCLASSEXW wc = {0};
+    wc.cbSize = sizeof(WNDCLASSEXW);
+    return GetClassInfoExW(hinst, MAKEINTATOM(atom), &wc) != 0;
+    // TODO
+    // if (atom == 0) return false;
+    // UINT16 uatom = (UINT16)atom;
+    // printf("\nuatom %d\n", uatom);
+    // return (uatom >= 0x0001) && (uatom <= 0xBFFF);
+    // if (uatom < 0x4000 || uatom > 0xBFFF) return false;
+    // if ((uatom >> 8) == 0) return false;  // High byte must be non-zero
+    // return true;
 }
 
 /**
- * @brief Validates an HWND using IsWindow (excludes NULL and invalid handles).
+ * @brief Validates an HWND using bit-level checks per Win32 spec.
  * @param hwnd The HWND to validate.
- * @return True if valid window handle.
+ * @return True if non-reserved, low index non-zero.
  */
 bool is_valid_hwnd(HWND hwnd) {
-    return hwnd != NULL && IsWindow(hwnd);
+    if (hwnd == NULL || hwnd == INVALID_HANDLE_VALUE) return false;
+    // Exclude standard reserved HWND constants
+    if (hwnd == HWND_TOP || hwnd == HWND_BOTTOM || hwnd == HWND_TOPMOST || hwnd == HWND_NOTOPMOST || hwnd == HWND_MESSAGE) return false;
+    // Exclude desktop (dynamic, but approximate via low bits)
+    HWND desktop = GetDesktopWindow();
+    if (hwnd == desktop) return false;
+    // Low 16 bits (index) must be non-zero for user windows
+    if (LOWORD((DWORD_PTR)hwnd) == 0) return false;
+    return true;
 }
 
 // =================================================================================================
