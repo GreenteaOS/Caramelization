@@ -147,6 +147,33 @@ void add_subtest(struct SubTest* subtests, int* numSubtests, const char* name, b
     } while(0)
 
 /**
+ * @brief Converts a Win32 error code to its symbolic name using a switch.
+ * @param code The DWORD error code.
+ * @return The symbolic string (e.g., "ERROR_INVALID_PARAMETER") or fallback for unknowns.
+ */
+const char* GetErrorCodeName(DWORD code) {
+    static char unknown_buf[64];
+    switch (code) {
+        #define CASE_ERROR_CODE(err) case err: return #err;
+        CASE_ERROR_CODE(ERROR_SUCCESS)
+        CASE_ERROR_CODE(ERROR_FILE_NOT_FOUND)
+        CASE_ERROR_CODE(ERROR_PATH_NOT_FOUND)
+        CASE_ERROR_CODE(ERROR_ACCESS_DENIED)
+        CASE_ERROR_CODE(ERROR_INVALID_HANDLE)
+        CASE_ERROR_CODE(ERROR_NOT_ENOUGH_MEMORY)
+        CASE_ERROR_CODE(ERROR_INVALID_PARAMETER)
+        CASE_ERROR_CODE(ERROR_CANNOT_FIND_WND_CLASS)
+        CASE_ERROR_CODE(ERROR_CLASS_DOES_NOT_EXIST)
+        CASE_ERROR_CODE(ERROR_INVALID_MENU_HANDLE)
+        CASE_ERROR_CODE(ERROR_TLW_WITH_WSCHILD)
+        // Extend with additional cases as tests evolve
+        default:
+            snprintf(unknown_buf, sizeof(unknown_buf), "UNKNOWN_ERROR_%lu", (unsigned long)code);
+            return unknown_buf;
+    }
+}
+
+/**
  * @brief Specialized assertion for GetLastError() comparisons.
  * @param subtests Array to append to.
  * @param numSubtests Pointer to count.
@@ -162,7 +189,7 @@ void add_subtest(struct SubTest* subtests, int* numSubtests, const char* name, b
         if (__cond) { \
             __reason[0] = '\0'; \
         } else { \
-            snprintf(__reason, sizeof(__reason), "%s (actual: %lu / 0x%08lX, expected: %lu / 0x%08lX)", failMsg, (unsigned long)__actual, (unsigned long)__actual, (unsigned long)expected, (unsigned long)expected); \
+            snprintf(__reason, sizeof(__reason), "%s (actual: %lu / %s, expected: %lu / %s)", failMsg, (unsigned long)__actual, GetErrorCodeName(__actual), (unsigned long)expected, GetErrorCodeName(expected)); \
         } \
         add_subtest(subtests, numSubtests, name, __cond, __reason, __FILE__, __LINE__); \
     } while(0)
@@ -189,6 +216,7 @@ void add_subtest(struct SubTest* subtests, int* numSubtests, const char* name, b
  * @param atom The ATOM to validate.
  * @param hinst The instance handle.
  * @return True if valid registered class.
+ * @return TODO True if in valid local class range (0x4000–0xBFFF, non-zero high byte).
  */
 bool is_valid_class_atom(ATOM atom, HINSTANCE hinst = GetModuleHandle(NULL)) {
     if (atom == 0) return false;
