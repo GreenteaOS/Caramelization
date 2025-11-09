@@ -21,6 +21,8 @@
 #include <io.h>      // For _dup, _dup2, _fileno
 #include <fcntl.h>   // For _O_TEXT
 #include <string.h>  // For strcmp, etc.
+#include <time.h>
+#include <conio.h>
 
 #pragma comment(lib, "user32.lib")
 
@@ -519,6 +521,209 @@ void run_test(const TestEntry* test) {
     }
 }
 
+// --- Windows Console Control Handler ---
+
+// Global flag to signal the REPL to exit gracefully
+volatile BOOL g_exit_flag = FALSE;
+
+/**
+ * @brief Handles console control signals (e.g., Ctrl+C).
+ * * When Ctrl+C is pressed (CTRL_C_EVENT), this sets the global exit flag
+ * and returns TRUE to indicate the signal was handled.
+ * * @param dwCtrlType The type of control event received.
+ * @return TRUE if the signal is handled, FALSE otherwise.
+ */
+static BOOL WINAPI CtrlHandler(DWORD dwCtrlType) {
+    if (dwCtrlType == CTRL_C_EVENT) {
+        g_exit_flag = TRUE;
+        // Print a message on the console before returning
+        printf("\nCtrl+C detected. Preparing to exit REPL...\n");
+        return TRUE; // Signal handled
+    }
+    return FALSE; // Let other handlers or default action take place
+}
+
+// Constants for the REPL buffer sizes
+#define MAX_LINE 512
+#define MAX_MATCHES 32
+
+// --- REPL Implementation ---
+
+/**
+ * @brief Enters the Read-Eval-Print-Loop for running tests.
+ */
+void enter_repl(void) {
+    // Get the number of tests (assuming g_test_count is correctly defined)
+    int testCount = sizeof(g_tests) / sizeof(TestEntry);
+
+    // Set the Ctrl+C handler and save the old one to restore later.
+    // PHANDLER_ROUTINE is the correct type for SetConsoleCtrlHandler's argument.
+    // The cast is required for the static function signature.
+    SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE);
+
+    printf("start typing and press Tab for autocomplete\n");
+
+    while (!g_exit_flag) {
+        printf("> ");
+        fflush(stdout);
+
+        char line[MAX_LINE] = {0};
+        int pos = 0;
+        int ch;
+
+        // Non-buffered, character-by-character input loop using _getch()
+        while (!g_exit_flag) {
+            // Use _getch() for non-buffered single-character input (Windows standard)
+            // This blocks until a key is pressed or Ctrl+C is processed.
+            ch = _getch();
+
+            if (ch == EOF) continue; // Should not happen with _getch
+
+            if (ch == 8 || ch == 127) {  // Backspace (ASCII 8 or DEL 127)
+                if (pos > 0) {
+                    pos--;
+                    line[pos] = '\0';
+                    // Clear the character on the screen: Backspace, Space, Backspace
+                    printf("\b \b");
+                    fflush(stdout);
+                }
+            } else if (ch == 9) {  // Tab (ASCII 9) for autocomplete
+                if (pos == 0) continue;
+
+                // --- Autocomplete Logic ---
+
+                // Find the start of the current token (prefix)
+                char* last_space = strrchr(line, ' ');
+                char* prefix_start = last_space ? last_space + 1 : line;
+                int prefix_len = (int)strlen(prefix_start);
+                if (prefix_len == 0) continue;
+
+                // Find matching test names
+                const char* matches[MAX_MATCHES] = {0};
+                int match_count = 0;
+
+                for (int i = 0; i < testCount && match_count < MAX_MATCHES; ++i) {
+                    // Use strncmp to check if the testName starts with the prefix
+                    if (strncmp(g_tests[i].testName, prefix_start, prefix_len) == 0) {
+                        matches[match_count++] = g_tests[i].testName;
+                    }
+                }
+
+                if (match_count == 0) {
+                    putchar('\a');  // Beep to indicate no match
+                } else if (match_count == 1) {
+                    // Single match: complete the name
+                    const char* completion = matches[0] + prefix_len;
+                    size_t rest_len = strlen(completion);
+
+                    if (pos + rest_len < MAX_LINE - 1) {
+                        // Append the rest of the string to the line buffer
+                        strcat(line, completion);
+                        pos += (int)rest_len;
+                        // Echo the completion to the console
+                        printf("%s", completion);
+                        fflush(stdout);
+                    }
+                } else {
+                    // Multiple matches: list options and redraw prompt
+                    printf("\n");
+                    for (int j = 0; j < match_count; ++j) {
+                        printf("%s ", matches[j]);
+                    }
+                    // Redraw the current prompt and line
+                    printf("\n> %s", line);
+                    fflush(stdout);
+                }
+            } else if (ch == 13 || ch == 10) {  // Enter (CR 13 or LF 10)
+                printf("\n");
+                fflush(stdout);
+
+                if (pos == 0) {
+                    // Empty command, continue the loop
+                    line[0] = '\0';
+                    break;
+                }
+
+                // Process the command line
+
+                // strtok_s is the non-deprecated, secure Windows version of strtok_r
+                char line_copy[MAX_LINE];
+                strcpy_s(line_copy, MAX_LINE, line);
+
+                char* context = NULL; // Used by strtok_s
+                char* token = strtok_s(line_copy, " \t", &context);
+
+                if (token != NULL) {
+                    if (strcmp(token, "exit") == 0) {
+                        g_exit_flag = TRUE;
+                    } else {
+                        // Check if the command is "all" (must be the only token)
+                        char* next_token = strtok_s(NULL, " \t", &context);
+
+                        if (next_token == NULL && strcmp(token, "all") == 0) {
+                            printf("Running all tests:\n");
+                            for (int i = 0; i < testCount && !g_exit_flag; ++i) {
+                                printf("  %s\n", g_tests[i].testName);
+                                run_test(&g_tests[i]);
+                            }
+                            printf("All tests completed.\n");
+                        } else {
+                            // Run space-separated tests
+
+                            // Restart tokenization on the original buffer 'line'
+                            // NOTE: We must copy 'line' again or use a non-destructive method,
+                            // but since we exit the loop, reusing 'line' is acceptable here.
+
+                            char line_for_token[MAX_LINE];
+                            strcpy_s(line_for_token, MAX_LINE, line);
+                            char* exec_context = NULL;
+                            char* test_token = strtok_s(line_for_token, " \t", &exec_context);
+
+                            while (test_token != NULL && !g_exit_flag) {
+                                int found = 0;
+                                for (int j = 0; j < testCount; ++j) {
+                                    if (strcmp(g_tests[j].testName, test_token) == 0) {
+                                        printf("Running %s:\n", test_token);
+                                        run_test(&g_tests[j]);
+                                        found = 1;
+                                        break;
+                                    }
+                                }
+                                if (!found) {
+                                    printf("Test not found: %s\n", test_token);
+                                }
+                                test_token = strtok_s(NULL, " \t", &exec_context);
+                            }
+                        }
+                    }
+                }
+
+                // Reset input buffer and position for the next prompt
+                line[0] = '\0';
+                pos = 0;
+                break; // Exit the inner input loop to show a new prompt
+            } else if (isprint(ch) && ch != '\t') {  // Printable character (excluding Tab)
+                if (pos < MAX_LINE - 2) {
+                    line[pos++] = (char)ch;
+                    line[pos] = '\0';
+                    putchar(ch);
+                    fflush(stdout);
+                }
+            }
+
+            // Check the exit flag after any input or processing
+            if (g_exit_flag) {
+                printf("Exiting REPL...\n");
+                break;
+            }
+        }
+    }
+
+    // --- Cleanup ---
+    // Restore the previous Ctrl+C handler
+    SetConsoleCtrlHandler(CtrlHandler, FALSE);
+};
+
 // =================================================================================================
 // Main Entry Point
 // =================================================================================================
@@ -528,6 +733,9 @@ int wmain(int argc, wchar_t* argv[]) {
 
     if (argc < 2) {
         print_available_tests();
+        // Set Ctrl+C handler
+        SetConsoleCtrlHandler(CtrlHandler, TRUE); // Define BOOL WINAPI CtrlHandler(DWORD) { exit_flag = true; return TRUE; } globally with bool exit_flag = false;
+        enter_repl();
         return 0;
     }
 
