@@ -561,7 +561,7 @@ void enter_repl(void) {
     // The cast is required for the static function signature.
     SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE);
 
-    printf("start typing and press Tab for autocomplete\n");
+    printf("Start typing and press Tab for autocomplete\n");
 
     while (!g_exit_flag) {
         printf("> ");
@@ -603,8 +603,8 @@ void enter_repl(void) {
                 int match_count = 0;
 
                 for (int i = 0; i < testCount && match_count < MAX_MATCHES; ++i) {
-                    // Use strncmp to check if the testName starts with the prefix
-                    if (strncmp(g_tests[i].testName, prefix_start, prefix_len) == 0) {
+                    // Use _strnicmp to check if the testName starts with the prefix
+                    if (_strnicmp(g_tests[i].testName, prefix_start, prefix_len) == 0) {
                         matches[match_count++] = g_tests[i].testName;
                     }
                 }
