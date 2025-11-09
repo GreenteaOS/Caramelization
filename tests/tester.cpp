@@ -562,6 +562,7 @@ void enter_repl(void) {
     SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE);
 
     printf("Start typing and press Tab for autocomplete or type `exit`\n");
+    char g_last_command[MAX_LINE] = {0};
 
     while (!g_exit_flag) {
         printf("> ");
@@ -629,28 +630,28 @@ void enter_repl(void) {
                         fflush(stdout);
                     }
                 } else if (match_count >= 1) { // Apply to single or multiple matches
-                        // 1. List options
-                        printf("\n");
-                        for (int j = 0; j < match_count; ++j) {
-                            printf("%s ", matches[j]);
-                        }
-
-                        // 2. Auto-fill with the first match, replacing the current line
-                        const char* full_match = matches[0];
-                        size_t match_len = strlen(full_match);
-
-                        if (match_len < MAX_LINE - 1) {
-                            // Overwrite the line buffer with the full match
-                            strncpy_s(line, MAX_LINE, full_match, _TRUNCATE);
-                            pos = (int)match_len;
-                            line[pos] = '\0';
-
-                            // Redraw the current prompt with the new line
-                            printf("\n> %s", line);
-                            fflush(stdout);
-                        }
+                    // 1. List options
+                    printf("\n");
+                    for (int j = 0; j < match_count; ++j) {
+                        printf("%s ", matches[j]);
                     }
-                } else if (ch == 13 || ch == 10) {  // Enter (CR 13 or LF 10)
+
+                    // 2. Auto-fill with the first match, replacing the current line
+                    const char* full_match = matches[0];
+                    size_t match_len = strlen(full_match);
+
+                    if (match_len < MAX_LINE - 1) {
+                        // Overwrite the line buffer with the full match
+                        strncpy_s(line, MAX_LINE, full_match, _TRUNCATE);
+                        pos = (int)match_len;
+                        line[pos] = '\0';
+
+                        // Redraw the current prompt with the new line
+                        printf("\n> %s", line);
+                        fflush(stdout);
+                    }
+                }
+            } else if (ch == 13 || ch == 10) {  // Enter (CR 13 or LF 10)
                 printf("\n");
                 fflush(stdout);
 
@@ -717,6 +718,7 @@ void enter_repl(void) {
                 }
 
                 // Reset input buffer and position for the next prompt
+                strcpy_s(g_last_command, MAX_LINE, line);
                 line[0] = '\0';
                 pos = 0;
                 break; // Exit the inner input loop to show a new prompt
@@ -727,6 +729,25 @@ void enter_repl(void) {
                     putchar(ch);
                     fflush(stdout);
                 }
+            } else if (ch == '\0' || ch == 0xE0) { // Special key sequence (Function or Arrow Key)
+                ch = _getch(); // Read the scan code
+
+                if (ch == 72) { // Arrow Up Scan Code
+                    if (strlen(g_last_command) > 0) {
+                        // 1. Clear the current line on screen
+                        for (int i = 0; i < pos; ++i) printf("\b \b");
+                        fflush(stdout);
+
+                        // 2. Restore the last command to the buffer
+                        strcpy_s(line, MAX_LINE, g_last_command);
+                        pos = (int)strlen(line);
+
+                        // 3. Print the restored command
+                        printf("%s", line);
+                        fflush(stdout);
+                    }
+                }
+                // Add other arrow keys or function keys here if needed
             }
 
             // Check the exit flag after any input or processing
