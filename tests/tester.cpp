@@ -480,12 +480,14 @@ TestEntry g_tests[] = {
 };
 
 void print_available_tests() {
-    printf("Available tests:\n");
     int testCount = sizeof(g_tests) / sizeof(TestEntry);
+    printf("Available tests: %d tests like", testCount);
     for (int i = 0; i < testCount; ++i) {
-        printf("  %s\n", g_tests[i].testName);
+        printf(" %s", g_tests[i].testName);
+
+        if (i > 10) break; // Let's not pollute the screen
     }
-    printf("\nRun all tests with: .\\win32_test_framework.exe all\n");
+    printf(" etc...\nRun all tests with: .\\win32_test_framework.exe all\n");
     printf("Run specific tests with: .\\win32_test_framework.exe test_name_1 test_name_2 ...\n");
     printf("Output is JSON; redirect with > test.json for parsing.\n");
 }
