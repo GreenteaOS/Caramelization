@@ -15,5 +15,7 @@ Tests framework of the [Greentea OS](https://github.com/GreenteaOS)
 - Uses C++ as "C with Classes"
 - Intentionally calls functions incorrectly
 - Crashes and resurrects itself all the time
+- REPL for manual testing
+- JSON for CI
 
-Implementation at https://github.com/GreenteaOS/Caramel
+Implementation of the APIs at https://github.com/GreenteaOS/Caramel
