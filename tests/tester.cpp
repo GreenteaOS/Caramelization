@@ -586,6 +586,61 @@ int wmain(int argc, wchar_t* argv[]) {
         printf("      \"%s\"%s\n", g_failed_test_names[i], (i < g_num_failed_tests - 1) ? "," : "");
     }
     printf("    ]\n");
+
+    // OS info
+    int bitness = (sizeof(void*) == 4) ? 32 : 64;
+    printf("    \"bitness\": %d,\n", bitness);
+    // OS version
+    RTL_OSVERSIONINFOW osvi = {0};
+    osvi.dwOSVersionInfoSize = sizeof(osvi);
+    typedef LONG (WINAPI* pRtlGetVersion)(PRTL_OSVERSIONINFOW);
+    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    pRtlGetVersion RtlGetVersion = NULL;
+    if (ntdll) {
+        RtlGetVersion = (pRtlGetVersion)GetProcAddress(ntdll, "RtlGetVersion");
+    }
+    if (RtlGetVersion) {
+        RtlGetVersion(&osvi);
+    } else {
+        // Fallback if unavailable (rare)
+        OSVERSIONINFOW fallback = {0};
+        fallback.dwOSVersionInfoSize = sizeof(fallback);
+        GetVersionExW(&fallback);
+        osvi.dwMajorVersion = fallback.dwMajorVersion;
+        osvi.dwMinorVersion = fallback.dwMinorVersion;
+    }
+    char os_name[64] = {0};
+    if (osvi.dwMajorVersion == 5 && osvi.dwMinorVersion == 1) {
+        strcpy_s(os_name, sizeof(os_name), "XP");
+    } else if (osvi.dwMajorVersion == 6 && osvi.dwMinorVersion == 0) {
+        strcpy_s(os_name, sizeof(os_name), "Vista");
+    } else if (osvi.dwMajorVersion == 6 && osvi.dwMinorVersion == 1) {
+        strcpy_s(os_name, sizeof(os_name), "7");
+    } else if (osvi.dwMajorVersion == 6 && osvi.dwMinorVersion == 2) {
+        strcpy_s(os_name, sizeof(os_name), "8");
+    } else if (osvi.dwMajorVersion == 6 && osvi.dwMinorVersion == 3) {
+        strcpy_s(os_name, sizeof(os_name), "8.1");
+    } else if (osvi.dwMajorVersion == 10) {
+        // Simple check; refine with osvi.dwBuildNumber if needed (e.g., >22000 = "11")
+        strcpy_s(os_name, sizeof(os_name), "10/11");
+    } else {
+        strcpy_s(os_name, sizeof(os_name), "Unknown");
+    }
+    char os_version_str[64];
+    sprintf_s(os_version_str, sizeof(os_version_str), "%d.%d (%s)",
+              (int)osvi.dwMajorVersion, (int)osvi.dwMinorVersion, os_name);
+    printf("    \"os_version\": \"%s\",\n", os_version_str);
+    // Other useful: timestamp
+    time_t now = time(NULL);
+    char* time_str = ctime(&now);
+    // Trim newline from ctime
+    size_t time_len = strlen(time_str);
+    if (time_len > 0 && time_str[time_len - 1] == '\n') {
+        time_str[time_len - 1] = '\0';
+    }
+    printf("    \"timestamp\": \"%s\",\n", time_str);
+
+    // Enf of summary
     printf("  }\n");
     printf("}\n");
 
