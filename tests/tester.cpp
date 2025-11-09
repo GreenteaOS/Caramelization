@@ -561,7 +561,7 @@ void enter_repl(void) {
     // The cast is required for the static function signature.
     SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE);
 
-    printf("Start typing and press Tab for autocomplete\n");
+    printf("Start typing and press Tab for autocomplete or type `exit`\n");
 
     while (!g_exit_flag) {
         printf("> ");
@@ -571,11 +571,15 @@ void enter_repl(void) {
         int pos = 0;
         int ch;
 
-        // Non-buffered, character-by-character input loop using _getch()
+        // Non-buffered, POLLING input loop using _kbhit() to detect Ctrl+C
         while (!g_exit_flag) {
-            // Use _getch() for non-buffered single-character input (Windows standard)
-            // This blocks until a key is pressed or Ctrl+C is processed.
-            ch = _getch();
+            // Check flag first to ensure responsiveness after background processing
+            if (g_exit_flag) break;
+
+            // Use _kbhit() to check for pending input without blocking
+            if (_kbhit()) {
+                ch = _getch(); // Only call _getch() if a key is available
+            } else continue;
 
             if (ch == EOF) continue; // Should not happen with _getch
 
@@ -624,17 +628,29 @@ void enter_repl(void) {
                         printf("%s", completion);
                         fflush(stdout);
                     }
-                } else {
-                    // Multiple matches: list options and redraw prompt
-                    printf("\n");
-                    for (int j = 0; j < match_count; ++j) {
-                        printf("%s ", matches[j]);
+                } else if (match_count >= 1) { // Apply to single or multiple matches
+                        // 1. List options
+                        printf("\n");
+                        for (int j = 0; j < match_count; ++j) {
+                            printf("%s ", matches[j]);
+                        }
+
+                        // 2. Auto-fill with the first match, replacing the current line
+                        const char* full_match = matches[0];
+                        size_t match_len = strlen(full_match);
+
+                        if (match_len < MAX_LINE - 1) {
+                            // Overwrite the line buffer with the full match
+                            strncpy_s(line, MAX_LINE, full_match, _TRUNCATE);
+                            pos = (int)match_len;
+                            line[pos] = '\0';
+
+                            // Redraw the current prompt with the new line
+                            printf("\n> %s", line);
+                            fflush(stdout);
+                        }
                     }
-                    // Redraw the current prompt and line
-                    printf("\n> %s", line);
-                    fflush(stdout);
-                }
-            } else if (ch == 13 || ch == 10) {  // Enter (CR 13 or LF 10)
+                } else if (ch == 13 || ch == 10) {  // Enter (CR 13 or LF 10)
                 printf("\n");
                 fflush(stdout);
 
@@ -665,6 +681,7 @@ void enter_repl(void) {
                             for (int i = 0; i < testCount && !g_exit_flag; ++i) {
                                 printf("  %s\n", g_tests[i].testName);
                                 run_test(&g_tests[i]);
+                                printf("\n");
                             }
                             printf("All tests completed.\n");
                         } else {
@@ -685,6 +702,7 @@ void enter_repl(void) {
                                     if (strcmp(g_tests[j].testName, test_token) == 0) {
                                         printf("Running %s:\n", test_token);
                                         run_test(&g_tests[j]);
+                                        printf("\n");
                                         found = 1;
                                         break;
                                     }
